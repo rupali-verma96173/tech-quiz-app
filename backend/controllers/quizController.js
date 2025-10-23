@@ -2,114 +2,274 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { userModel, quizModel, attemptModel } from "../models/quizModel.js";
 
-//  Login
+/**
+ * User login endpoint with JWT authentication
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
 export const Login = async (req, res) => {
   try {
     const { useremail, password } = req.body;
+    
+    // Input validation
     if (!useremail || !password) {
-      return res.status(501).json({
+      return res.status(400).json({
         success: false,
-        message: "Please Enter the Required Field",
+        message: "Email and password are required",
       });
     }
-    // Check the email valid or not
-    let userResult = await userModel.findOne({ useremail });
+
+    // Email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(useremail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please enter a valid email address",
+      });
+    }
+
+    // Find user by email
+    const userResult = await userModel.findOne({ useremail });
     if (!userResult) {
-      return res.status(501).json({
+      return res.status(401).json({
         success: false,
-        message: "Invalid Email",
+        message: "Invalid email or password",
       });
     }
-    // Password
+
+    // Verify password
     bcrypt.compare(password, userResult.password, async (error, result) => {
+      if (error) {
+        console.error('Password comparison error:', error);
+        return res.status(500).json({
+          success: false,
+          message: "Authentication error",
+        });
+      }
+
       if (result) {
-        // Token Generate
-        const secret = process.env.SECRET_KEY || 'devsecret';
-        let token = await jwt.sign(
-          { userId: userResult._id },
-          secret,
-          {
-            expiresIn: "2h",
-          }
-        );
-        if (!token) {
-          return res.status(401).json({
+        try {
+          // Generate JWT token
+          const secret = process.env.SECRET_KEY || 'devsecret';
+          const token = jwt.sign(
+            { userId: userResult._id },
+            secret,
+            { expiresIn: "24h" }
+          );
+
+          // Remove password from response
+          const userResponse = {
+            _id: userResult._id,
+            username: userResult.username,
+            useremail: userResult.useremail,
+            role: userResult.role
+          };
+
+          return res.status(200).json({
+            success: true,
+            message: "Login successful",
+            user: userResponse,
+            token,
+          });
+        } catch (tokenError) {
+          console.error('Token generation error:', tokenError);
+          return res.status(500).json({
             success: false,
-            message: "Invalid Token...",
-            error,
+            message: "Authentication error",
           });
         }
-        return res.status(201).json({
-          success: true,
-          message: "User Login Successfully",
-          userResult,
-          token,
-        });
       } else {
-        return res.status(501).json({
+        return res.status(401).json({
           success: false,
-          message: "Invalid User",
-          error,
+          message: "Invalid email or password",
         });
       }
     });
   } catch (error) {
-    res.status(501).json({
+    console.error('Login error:', error);
+    res.status(500).json({
       success: false,
-      message: "Invalid User...",
+      message: "Internal server error",
     });
   }
 };
 
-// SignUp
+/**
+ * User registration endpoint with input validation and password hashing
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ */
 export const SignUp = async (req, res) => {
   try {
     const { username, useremail, password } = req.body;
-    // Check Email already exist or not?
-    const mailExist = await userModel.find({
-      useremail: useremail,
-    });
-    if (mailExist.length > 0) {
-      return res.status(501).json({
+    
+    // Input validation
+    if (!username || !useremail || !password) {
+      return res.status(400).json({
         success: false,
-        message: "email already exist...",
+        message: "Username, email, and password are required",
       });
     }
-    // Password encryption
-    bcrypt.hash(password, 10, async (error, hashcode) => {
+
+    // Username validation
+    if (username.trim().length < 3) {
+      return res.status(400).json({
+        success: false,
+        message: "Username must be at least 3 characters long",
+      });
+    }
+
+    // Email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(useremail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please enter a valid email address",
+      });
+    }
+
+    // Password strength validation
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters long",
+      });
+    }
+
+    // Check if email already exists
+    const existingUser = await userModel.findOne({ useremail });
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: "Email already exists",
+      });
+    }
+
+    // Hash password
+    bcrypt.hash(password, 12, async (error, hashcode) => {
       if (error) {
-        return res.status(501).json({
+        console.error('Password hashing error:', error);
+        return res.status(500).json({
           success: false,
-          message: "Invalid Password",
+          message: "Registration failed. Please try again.",
         });
       }
-      const user = userModel({ username, useremail, password: hashcode });
-      // Save the data into the database
-      let result = await user.save();
-      if (result) {
-        return res.status(201).json({
-          success: true,
-          message: "User Successfully Created...",
+
+      try {
+        // Create new user
+        const user = new userModel({ 
+          username: username.trim(), 
+          useremail: useremail.toLowerCase().trim(), 
+          password: hashcode 
+        });
+        
+        // Save user to database
+        const result = await user.save();
+        
+        if (result) {
+          return res.status(201).json({
+            success: true,
+            message: "User registered successfully",
+            user: {
+              _id: result._id,
+              username: result.username,
+              useremail: result.useremail,
+              role: result.role
+            }
+          });
+        }
+      } catch (saveError) {
+        console.error('User save error:', saveError);
+        return res.status(500).json({
+          success: false,
+          message: "Registration failed. Please try again.",
         });
       }
     });
   } catch (error) {
-    res.status(501).json({
+    console.error('SignUp error:', error);
+    res.status(500).json({
       success: false,
-      message: "There Is An Error...",
+      message: "Internal server error",
     });
   }
 };
 
 export const listQuizzes = async (req, res) => {
   try {
-    const { tech } = req.query;
-    const filter = tech ? { technology: tech, isPublished: true } : { isPublished: true };
-    const quizzes = await quizModel.find(filter).select("title technology createdAt isPublished");
-    console.log('Backend returning quizzes:', quizzes);
-    res.json({ success: true, quizzes });
+    const { tech, page = 1, limit = 10, sort = 'createdAt' } = req.query;
+    
+    // Validate pagination parameters
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    
+    if (pageNum < 1 || limitNum < 1 || limitNum > 50) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid pagination parameters. Page must be >= 1, limit must be 1-50" 
+      });
+    }
+
+    // Build filter object
+    let filter = { isPublished: true };
+    
+    // Handle technology filter with case-insensitive search
+    if (tech && tech.trim()) {
+      const techRegex = new RegExp(tech.trim(), 'i');
+      filter.technology = techRegex;
+    }
+
+    // Validate sort parameter
+    const allowedSortFields = ['createdAt', 'title', 'technology'];
+    const sortField = allowedSortFields.includes(sort) ? sort : 'createdAt';
+    const sortOrder = sort === 'title' ? 1 : -1; // title asc, others desc
+
+    // Calculate skip value for pagination
+    const skip = (pageNum - 1) * limitNum;
+
+    // Execute query with pagination
+    const [quizzes, totalCount] = await Promise.all([
+      quizModel.find(filter)
+        .select("title technology createdAt isPublished questions")
+        .sort({ [sortField]: sortOrder })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(), // Use lean() for better performance
+      quizModel.countDocuments(filter)
+    ]);
+
+    // Calculate pagination info
+    const totalPages = Math.ceil(totalCount / limitNum);
+    const hasNextPage = pageNum < totalPages;
+    const hasPrevPage = pageNum > 1;
+
+    res.json({ 
+      success: true, 
+      quizzes,
+      pagination: {
+        currentPage: pageNum,
+        totalPages,
+        totalCount,
+        hasNextPage,
+        hasPrevPage,
+        limit: limitNum
+      }
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Error fetching quizzes" });
+    console.error('Error in listQuizzes:', error);
+    
+    // Handle specific database errors
+    if (error.name === 'CastError') {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid query parameters" 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: "Unable to fetch quizzes at this time. Please try again later." 
+    });
   }
 };
 
@@ -124,11 +284,74 @@ export const getTechnologies = async (req, res) => {
 
 export const getQuiz = async (req, res) => {
   try {
-    const quiz = await quizModel.findById(req.params.id).select("title technology questions isPublished");
-    if (!quiz || !quiz.isPublished) return res.status(404).json({ success: false, message: "Quiz not found" });
-    res.json({ success: true, quiz });
+    const { id } = req.params;
+    
+    // Validate ObjectId format
+    if (!id || !/^[0-9a-fA-F]{24}$/.test(id)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid quiz ID format" 
+      });
+    }
+
+    const quiz = await quizModel.findById(id)
+      .select("title technology questions isPublished createdAt")
+      .lean();
+
+    // Handle quiz not found
+    if (!quiz) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Quiz not found or has been removed" 
+      });
+    }
+
+    // Check if quiz is published
+    if (!quiz.isPublished) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "This quiz is not yet available to the public" 
+      });
+    }
+
+    // Validate quiz has questions
+    if (!quiz.questions || quiz.questions.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "This quiz has no questions available" 
+      });
+    }
+
+    // Sanitize questions for security (don't send correct answers to frontend)
+    const sanitizedQuiz = {
+      ...quiz,
+      questions: quiz.questions.map(q => ({
+        text: q.text,
+        options: q.options,
+        // Don't include correctIndex in response
+      }))
+    };
+
+    res.json({ 
+      success: true, 
+      quiz: sanitizedQuiz,
+      questionCount: quiz.questions.length
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Error fetching quiz" });
+    console.error('Error in getQuiz:', error);
+    
+    // Handle specific MongoDB errors
+    if (error.name === 'CastError') {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid quiz ID format" 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: "Unable to fetch quiz details. Please try again later." 
+    });
   }
 };
 
@@ -157,31 +380,136 @@ export const adminGetQuiz = async (req, res) => {
 
 export const submitAttempt = async (req, res) => {
   try {
-    const { answers } = req.body; // [{questionIndex, selectedIndex}]
-    const quiz = await quizModel.findById(req.params.id);
-    if (!quiz || !quiz.isPublished) return res.status(404).json({ success: false, message: "Quiz not found" });
+    const { answers } = req.body;
+    const { id: quizId } = req.params;
+    const userId = req.user._id;
 
-    let correct = 0;
-    quiz.questions.forEach((q, idx) => {
-      const ans = answers.find(a => a.questionIndex === idx);
-      if (ans && ans.selectedIndex === q.correctIndex) correct += 1;
+    // Validate quiz ID format
+    if (!quizId || !/^[0-9a-fA-F]{24}$/.test(quizId)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid quiz ID format" 
+      });
+    }
+
+    // Validate answers array
+    if (!Array.isArray(answers)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Answers must be provided as an array" 
+      });
+    }
+
+    // Check for duplicate attempts (prevent spam)
+    const recentAttempt = await attemptModel.findOne({
+      userId,
+      quizId,
+      createdAt: { $gte: new Date(Date.now() - 5 * 60 * 1000) } // 5 minutes ago
     });
-    const total = quiz.questions.length;
-    const score = Math.round((correct / (total || 1)) * 100);
 
+    if (recentAttempt) {
+      return res.status(429).json({ 
+        success: false, 
+        message: "Please wait before attempting this quiz again" 
+      });
+    }
+
+    // Fetch quiz with all questions
+    const quiz = await quizModel.findById(quizId);
+    if (!quiz) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Quiz not found or has been removed" 
+      });
+    }
+
+    if (!quiz.isPublished) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "This quiz is not available for attempts" 
+      });
+    }
+
+    if (!quiz.questions || quiz.questions.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "This quiz has no questions" 
+      });
+    }
+
+    // Validate answers structure and range
+    const validAnswers = answers.filter(answer => {
+      return answer && 
+             typeof answer.questionIndex === 'number' && 
+             typeof answer.selectedIndex === 'number' &&
+             answer.questionIndex >= 0 && 
+             answer.questionIndex < quiz.questions.length &&
+             answer.selectedIndex >= 0 && 
+             answer.selectedIndex < quiz.questions[answer.questionIndex].options.length;
+    });
+
+    if (validAnswers.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "No valid answers provided" 
+      });
+    }
+
+    // Calculate score
+    let correct = 0;
+    const total = quiz.questions.length;
+    
+    quiz.questions.forEach((question, questionIndex) => {
+      const userAnswer = validAnswers.find(a => a.questionIndex === questionIndex);
+      if (userAnswer && userAnswer.selectedIndex === question.correctIndex) {
+        correct += 1;
+      }
+    });
+
+    const score = Math.round((correct / total) * 100);
+
+    // Create attempt record
     const attempt = await attemptModel.create({
-      userId: req.user._id,
+      userId,
       quizId: quiz._id,
-      answers: answers || [],
+      answers: validAnswers,
       score,
       correctCount: correct,
       total
     });
 
-    res.status(201).json({ success: true, score, correct, total, attemptId: attempt._id });
+    // Determine performance message
+    let performanceMessage = "";
+    if (score >= 90) performanceMessage = "Excellent work!";
+    else if (score >= 80) performanceMessage = "Great job!";
+    else if (score >= 70) performanceMessage = "Good effort!";
+    else if (score >= 60) performanceMessage = "Not bad, keep practicing!";
+    else performanceMessage = "Keep studying and try again!";
+
+    res.status(201).json({ 
+      success: true, 
+      score, 
+      correct, 
+      total, 
+      attemptId: attempt._id,
+      performanceMessage,
+      percentage: score
+    });
   } catch (error) {
-    console.log('Submit attempt error:', error);
-    res.status(500).json({ success: false, message: "Error submitting attempt" });
+    console.error('Error in submitAttempt:', error);
+    
+    // Handle specific database errors
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid attempt data provided" 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: "Unable to submit quiz attempt. Please try again later." 
+    });
   }
 };
 

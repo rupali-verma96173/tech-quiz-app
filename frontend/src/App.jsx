@@ -1,38 +1,45 @@
 import { useState, useEffect } from 'react'
+import { AppProvider, useApp } from './context/AppContext'
 import Login from './components/Login'
 import Signup from './components/Signup'
-import QuizList from './components/QuizList'
-import MyAttempts from './components/MyAttempts'
+import UserDashboard from './components/UserDashboard'
+import AdminDashboard from './components/AdminDashboard'
 import TakeQuiz from './components/TakeQuiz'
-import AdminPanel from './components/AdminPanel'
 import './App.css'
 
-function App() {
-  const [user, setUser] = useState(null)
+// Main App Component with Context
+function AppContent() {
+  const { user, loading, error, clearError, logout } = useApp()
   const [currentView, setCurrentView] = useState('login')
   const [selectedQuiz, setSelectedQuiz] = useState(null)
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
-    const userData = localStorage.getItem('user')
-    if (token && userData) {
-      setUser(JSON.parse(userData))
-      setCurrentView('quizzes')
+    if (user) {
+      // Redirect based on user role
+      if (user.role === 'admin') {
+        setCurrentView('admin-dashboard')
+      } else {
+        setCurrentView('user-dashboard')
+      }
+    } else {
+      setCurrentView('login')
     }
-  }, [])
+  }, [user])
 
-  const handleLogin = (userData, token) => {
-    setUser(userData)
-    localStorage.setItem('token', token)
-    localStorage.setItem('user', JSON.stringify(userData))
-    setCurrentView('quizzes')
-  }
+  // Clear error when view changes
+  useEffect(() => {
+    clearError()
+  }, [currentView, clearError])
 
-  const handleLogout = () => {
-    setUser(null)
-    localStorage.removeItem('token')
-    localStorage.removeItem('user')
-    setCurrentView('login')
+  const handleLogout = async () => {
+    try {
+      await logout()
+      setCurrentView('login')
+    } catch (err) {
+      console.error('Logout error:', err)
+      // Force logout even if API call fails
+      setCurrentView('login')
+    }
   }
 
   const startQuiz = (quiz) => {
@@ -40,9 +47,25 @@ function App() {
     setCurrentView('quiz')
   }
 
-  const backToQuizzes = () => {
+  const backToDashboard = () => {
     setSelectedQuiz(null)
-    setCurrentView('quizzes')
+    if (user?.role === 'admin') {
+      setCurrentView('admin-dashboard')
+    } else {
+      setCurrentView('user-dashboard')
+    }
+  }
+
+  // Show loading spinner
+  if (loading && !user) {
+    return (
+      <div className="app">
+        <div className="loading-container">
+          <div className="loading-spinner"></div>
+          <p>Loading...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -52,46 +75,54 @@ function App() {
         {user && (
           <div className="user-info">
             <span>Welcome, {user.username}</span>
-            {user.role === 'admin' && (
-              <button onClick={() => setCurrentView('admin')}>Admin Panel</button>
-            )}
+            <span className="user-role">({user.role === 'admin' ? 'Administrator' : 'User'})</span>
             <button onClick={handleLogout}>Logout</button>
           </div>
         )}
       </header>
 
       <main>
+        {/* Global Error Display */}
+        {error && (
+          <div className="error">
+            {error}
+          </div>
+        )}
+
+        {/* Authentication Views */}
         {!user && currentView === 'login' && (
-          <Login onLogin={handleLogin} onSwitch={() => setCurrentView('signup')} />
+          <Login onSwitch={() => setCurrentView('signup')} />
         )}
         
         {!user && currentView === 'signup' && (
-          <Signup onLogin={handleLogin} onSwitch={() => setCurrentView('login')} />
+          <Signup onSwitch={() => setCurrentView('login')} />
         )}
 
-        {user && currentView === 'quizzes' && (
-          <>
-            <div style={{display:'flex', gap:'10px', justifyContent:'center', marginBottom:'10px'}}>
-              {user.role !== 'admin' && (
-                <button onClick={() => setCurrentView('history')}>My Attempts</button>
-              )}
-            </div>
-            <QuizList onStartQuiz={startQuiz} isAdmin={user.role === 'admin'} />
-          </>
-        )}
-        {user && currentView === 'history' && user.role !== 'admin' && (
-          <MyAttempts />
+        {/* User Dashboard */}
+        {user && currentView === 'user-dashboard' && user.role !== 'admin' && (
+          <UserDashboard />
         )}
 
+        {/* Admin Dashboard */}
+        {user && currentView === 'admin-dashboard' && user.role === 'admin' && (
+          <AdminDashboard />
+        )}
+
+        {/* Quiz Taking View */}
         {user && currentView === 'quiz' && selectedQuiz && (
-          <TakeQuiz quiz={selectedQuiz} onBack={backToQuizzes} />
-        )}
-
-        {user && currentView === 'admin' && user.role === 'admin' && (
-          <AdminPanel onBack={() => setCurrentView('quizzes')} />
+          <TakeQuiz quiz={selectedQuiz} onBack={backToDashboard} />
         )}
       </main>
     </div>
+  )
+}
+
+// App with Provider Wrapper
+function App() {
+  return (
+    <AppProvider>
+      <AppContent />
+    </AppProvider>
   )
 }
 

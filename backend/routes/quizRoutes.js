@@ -6,6 +6,9 @@ const userRouter = express.Router();
 
 userRouter.post("/login", Login);
 userRouter.post("/signup", SignUp);
+userRouter.post("/logout", auth, (req, res) => {
+  res.json({ success: true, message: "Logged out successfully" });
+});
 
 userRouter.get("/quizzes", listQuizzes);
 userRouter.get("/quizzes/technologies", getTechnologies);
